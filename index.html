@@ -1,422 +1,787 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>リバーシ - CPU対戦</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>リバーシ</title>
 <style>
-  :root {
-    --bg: #0f1a14;
-    --panel: #18271e;
-    --board: #1f7a47;
-    --board-dark: #17603a;
-    --line: #0d3d24;
-    --accent: #f2c14e;
-    --text: #e8f0ea;
-    --muted: #93a99a;
+  :root{
+    --bg:#0D1412; --panel:#131C19; --edge:#22322C; --felt:#17362D; --felt2:#193A31;
+    --line:#0C241E; --ink:#14181A; --bone:#F0EADC; --amber:#E0A34A; --mint:#7FB9A9;
+    --dim:#6E827B; --text:#DCE6E1;
+    --sans:'Hiragino Sans','Hiragino Kaku Gothic ProN','Noto Sans JP','Yu Gothic',system-ui,sans-serif;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    min-height: 100vh;
-    background: radial-gradient(circle at 50% 0%, #1d3326, var(--bg) 70%);
-    color: var(--text);
-    font-family: "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 16px;
+  *,*::before,*::after{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg)}
+  body{
+    font-family:var(--sans); color:var(--text);
+    display:flex; justify-content:center; padding:14px 12px 28px;
+    min-height:100vh; -webkit-text-size-adjust:100%;
   }
-  h1 {
-    margin: 8px 0 4px;
-    font-size: clamp(24px, 6vw, 36px);
-    letter-spacing: 0.15em;
+  .app{width:100%; max-width:690px}
+
+  /* ---- ヘッダー ---- */
+  .head{display:flex; align-items:flex-end; justify-content:space-between; margin-bottom:12px; gap:12px}
+  .brand{font-size:12px; letter-spacing:.42em; color:var(--mint)}
+  .sub{font-size:11px; letter-spacing:.2em; color:var(--dim); margin-top:3px}
+  .remain{font-family:var(--mono); font-size:11px; color:var(--dim); text-align:right; white-space:nowrap}
+
+  /* ---- 評価バー ---- */
+  .metercap{display:flex; justify-content:space-between; font-family:var(--mono);
+            font-size:10px; color:var(--dim); margin-bottom:3px}
+  .meter{position:relative; height:6px; background:var(--ink); border:1px solid var(--edge); margin-bottom:5px}
+  .meter > i{display:block; height:100%; background:var(--bone); width:50%; transition:width 500ms ease}
+  /* 中央の基準線。進捗バーではなく形勢の振れ幅だと分かるように */
+  .meter::after{content:""; position:absolute; left:50%; top:-2px; bottom:-2px;
+                width:1px; background:var(--dim); opacity:.7}
+  .score{display:flex; justify-content:space-between; gap:8px; font-family:var(--mono);
+         font-size:11px; color:var(--dim); margin-bottom:12px}
+
+  /* ---- 盤面 ---- */
+  .boardwrap{position:relative}
+  .row{display:flex}
+  .ranks{display:flex; flex-direction:column; justify-content:space-around;
+         padding-right:8px; font-family:var(--mono); font-size:13px; color:var(--dim)}
+  .ranks span{flex:1; display:flex; align-items:center}
+  .files{display:flex; font-family:var(--mono); font-size:13px; color:var(--dim)}
+  .files span{flex:1; text-align:center; padding-top:4px}
+  .boardcol{flex:1; min-width:0}
+  .board{
+    display:grid; grid-template-columns:repeat(8,1fr); aspect-ratio:1/1; width:100%;
+    background:var(--felt); border:3px solid var(--edge); box-shadow:0 14px 42px rgba(0,0,0,.5);
   }
-  .sub { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
-  .controls {
-    display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
-    margin-bottom: 12px;
+
+  .cell{
+    position:relative; display:flex; align-items:center; justify-content:center;
+    padding:0; border:0; background:var(--felt); cursor:default; -webkit-tap-highlight-color:transparent;
   }
-  select, button {
-    background: var(--panel);
-    color: var(--text);
-    border: 1px solid #2d4636;
-    border-radius: 8px;
-    padding: 8px 12px;
-    font-size: 14px;
-    font-family: inherit;
-    cursor: pointer;
+  .cell.alt{background:var(--felt2)}
+  .cell:not(.c7){border-right:1px solid var(--line)}
+  .cell:not(.r7){border-bottom:1px solid var(--line)}
+  .cell.playable{cursor:pointer}
+  .cell:focus-visible{outline:2px solid var(--amber); outline-offset:-2px}
+
+  /* 石：表裏を貼り合わせて Y 軸回転でひっくり返す */
+  .disc{width:100%; height:100%; display:none; align-items:center; justify-content:center; perspective:500px}
+  .cell.has .disc{display:flex}
+  .flip{position:relative; width:88%; height:88%; transform-style:preserve-3d;
+        transition:transform 360ms cubic-bezier(.2,.85,.3,1)}
+  .flip.white{transform:rotateY(180deg)}
+  .face{position:absolute; inset:0; border-radius:50%; backface-visibility:hidden}
+  .face.b{background:radial-gradient(circle at 32% 28%,#3B4247 0%,#191D20 45%,#0A0C0D 100%);
+          box-shadow:0 2px 5px rgba(0,0,0,.55), inset 0 -2px 4px rgba(0,0,0,.5)}
+  .face.w{background:radial-gradient(circle at 32% 28%,#FFFFFF 0%,#F0EADC 45%,#C9C0AC 100%);
+          box-shadow:0 2px 5px rgba(0,0,0,.45), inset 0 -2px 4px rgba(0,0,0,.18);
+          transform:rotateY(180deg)}
+
+  .marker{display:none; width:26%; height:26%; border-radius:50%;
+          border:2px solid rgba(224,163,74,.55)}
+  .cell.playable .marker{display:block}
+  .cell.tip .marker{background:var(--amber); border-color:var(--amber); box-shadow:0 0 12px var(--amber)}
+  .dot{position:absolute; display:none; width:16%; height:16%; border-radius:50%;
+       background:var(--amber); bottom:6%; right:6%; opacity:.9}
+  .cell.last.has .dot{display:block}
+
+  /* ---- オーバーレイ ---- */
+  .over{position:absolute; inset:0; display:none; align-items:center; justify-content:center;
+        background:rgba(9,15,13,.9); padding:12px}
+  .over.on{display:flex}
+  .card{background:var(--panel); border:1px solid var(--edge); padding:26px 28px; width:100%; max-width:360px}
+  .card.result{text-align:center; max-width:300px}
+  .kicker{font-size:11px; letter-spacing:.3em; color:var(--mint); margin-bottom:14px}
+  .big{font-family:var(--mono); font-size:38px; color:var(--bone); margin:14px 0}
+  .big em{color:var(--dim); font-size:16px; font-style:normal}
+  .verdict{font-size:14px; color:var(--amber); margin-bottom:18px}
+  .lbl{font-size:12px; color:var(--dim); margin-bottom:7px}
+  .seg{display:flex; gap:4px; margin-bottom:18px}
+  .seg button{
+    flex:1; padding:9px 2px; font:inherit; font-size:12px; color:var(--text);
+    background:transparent; border:1px solid var(--edge); cursor:pointer;
   }
-  button:hover, select:hover { border-color: var(--accent); }
-  button.primary { background: var(--accent); color: #222; border-color: var(--accent); font-weight: bold; }
-  .scoreboard {
-    display: flex; gap: 12px; margin-bottom: 12px; width: min(92vw, 520px);
+  .seg button[aria-checked="true"]{border-color:var(--amber); color:var(--amber)}
+  .go{width:100%; padding:10px; font:inherit; font-size:12px; letter-spacing:.1em;
+      background:var(--amber); color:var(--bg); border:0; cursor:pointer}
+
+  /* ---- 操作 ---- */
+  .bar{display:flex; gap:8px; margin-top:12px; flex-wrap:wrap}
+  .bar button{
+    padding:9px 13px; font:inherit; font-size:12px; letter-spacing:.08em;
+    color:var(--text); background:transparent; border:1px solid var(--edge);
+    border-radius:4px; cursor:pointer;
   }
-  .score {
-    flex: 1; display: flex; align-items: center; gap: 10px;
-    background: var(--panel); border-radius: 10px; padding: 10px 14px;
-    border: 2px solid transparent; transition: border-color .2s;
+  .bar button:disabled{color:var(--dim); opacity:.45; cursor:default}
+  #snd{margin-left:auto; border-color:var(--amber); color:var(--amber)}
+  #snd.off{border-color:var(--edge); color:var(--dim)}
+  button:focus-visible{outline:2px solid var(--amber); outline-offset:2px}
+
+  /* ---- 棋譜 ---- */
+  .panel{margin-top:12px; background:var(--panel); border:1px solid var(--edge); padding:9px 13px}
+  .note{font-family:var(--mono); font-size:11px; color:var(--amber); min-height:15px}
+  .moves{margin-top:7px; display:flex; flex-wrap:wrap; gap:3px 9px;
+         font-family:var(--mono); font-size:11px; color:var(--dim);
+         max-height:62px; overflow-y:auto}
+  .moves .me{color:var(--text)}
+
+  @media (max-width:420px){
+    .brand{font-size:11px} .ranks,.files{font-size:11px}
+    .bar button{padding:8px 10px; font-size:11px}
   }
-  .score.active { border-color: var(--accent); }
-  .score .disc { width: 26px; height: 26px; }
-  .score .num { font-size: 26px; font-weight: bold; margin-left: auto; }
-  .score .who { font-size: 13px; color: var(--muted); }
-  .board-wrap {
-    position: relative;
-    width: min(92vw, 520px);
-    aspect-ratio: 1;
-    background: #3b2a1a;
-    padding: 2.5%;
-    border-radius: 12px;
-    box-shadow: 0 12px 40px rgba(0,0,0,.5);
+  @media (prefers-reduced-motion:reduce){
+    .flip{transition:none !important; transition-delay:0ms !important}
+    .meter > i{transition:none}
   }
-  .board {
-    width: 100%; height: 100%;
-    display: grid;
-    grid-template-columns: repeat(8, 1fr);
-    grid-template-rows: repeat(8, 1fr);
-    background: var(--line);
-    gap: 2px;
-    border: 2px solid var(--line);
-  }
-  .cell {
-    background: var(--board);
-    position: relative;
-    cursor: default;
-    display: flex; align-items: center; justify-content: center;
-  }
-  .cell.legal { cursor: pointer; }
-  .cell.legal::after {
-    content: ""; width: 26%; height: 26%; border-radius: 50%;
-    background: rgba(255,255,255,.18);
-  }
-  .cell.legal:hover { background: #26915a; }
-  .cell.last { background: var(--board-dark); }
-  .disc {
-    width: 84%; height: 84%; border-radius: 50%;
-    position: relative;
-    transition: transform .35s;
-    transform-style: preserve-3d;
-  }
-  .disc.black { background: radial-gradient(circle at 35% 30%, #555, #111 60%); box-shadow: 0 3px 4px rgba(0,0,0,.5); }
-  .disc.white { background: radial-gradient(circle at 35% 30%, #fff, #cfcfcf 70%); box-shadow: 0 3px 4px rgba(0,0,0,.4); }
-  .disc.flip { animation: flip .35s ease; }
-  .disc.place { animation: place .2s ease-out; }
-  @keyframes flip { 0% { transform: rotateY(0) } 50% { transform: rotateY(90deg) scale(1.08) } 100% { transform: rotateY(0) } }
-  @keyframes place { from { transform: scale(.3); opacity: .3 } to { transform: scale(1); opacity: 1 } }
-  .status {
-    margin-top: 12px; min-height: 24px; font-size: 16px; text-align: center;
-  }
-  .overlay {
-    position: absolute; inset: 0; display: none;
-    align-items: center; justify-content: center; flex-direction: column;
-    background: rgba(0,0,0,.6); border-radius: 12px; gap: 14px;
-  }
-  .overlay.show { display: flex; }
-  .overlay .result { font-size: clamp(26px, 7vw, 40px); font-weight: bold; color: var(--accent); }
-  .overlay .detail { font-size: 18px; }
-  footer { margin-top: 18px; color: var(--muted); font-size: 12px; text-align: center; line-height: 1.7; }
 </style>
 </head>
 <body>
-  <h1>リバーシ</h1>
-  <div class="sub">CPU と対戦できるブラウザ版リバーシ</div>
 
-  <div class="controls">
-    <label>
-      <select id="color" aria-label="あなたの色">
-        <option value="1">先手（黒）で遊ぶ</option>
-        <option value="-1">後手（白）で遊ぶ</option>
-      </select>
-    </label>
-    <label>
-      <select id="level" aria-label="CPUの強さ">
-        <option value="1">CPU：よわい</option>
-        <option value="2" selected>CPU：ふつう</option>
-        <option value="3">CPU：つよい</option>
-        <option value="4">CPU：最強</option>
-      </select>
-    </label>
+<div class="app">
+  <div class="head">
+    <div>
+      <div class="brand">REVERSI</div>
+      <div class="sub" id="sub">vs CPU</div>
+    </div>
+    <div class="remain" id="remain">残り 60 マス</div>
+  </div>
+
+  <div class="metercap"><span>形勢</span><span id="edge">互角</span></div>
+  <div class="meter" title="黒が優勢なら右へ、白が優勢なら左へ振れます（石数ではありません）"><i id="meter"></i></div>
+  <div class="score">
+    <span id="sL">● 02</span><span id="sM">あなたの番</span><span id="sR">02 ○</span>
+  </div>
+
+  <div class="boardwrap">
+    <div class="row">
+      <div class="ranks" id="ranks"></div>
+      <div class="boardcol">
+        <div class="board" id="board" role="grid" aria-label="リバーシ盤"></div>
+        <div class="files" id="files"></div>
+      </div>
+    </div>
+
+    <div class="over" id="resultOver">
+      <div class="card result">
+        <div class="kicker">終局</div>
+        <div class="big"><span id="rB">0</span> <em>—</em> <span id="rW">0</span></div>
+        <div class="verdict" id="rV"></div>
+        <button class="go" id="again">もう一局</button>
+      </div>
+    </div>
+
+    <div class="over on" id="setupOver">
+      <div class="card">
+        <div class="kicker">対局設定</div>
+        <div class="lbl">難易度</div>
+        <div class="seg" id="segLv" role="radiogroup" aria-label="難易度">
+          <button role="radio" data-v="1">やさしい</button>
+          <button role="radio" data-v="2">ふつう</button>
+          <button role="radio" data-v="3">つよい</button>
+        </div>
+        <div class="lbl">あなたの石</div>
+        <div class="seg" id="segSd" role="radiogroup" aria-label="あなたの石">
+          <button role="radio" data-v="1">● 黒（先手）</button>
+          <button role="radio" data-v="2">○ 白（後手）</button>
+        </div>
+        <button class="go" id="start">対局開始</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="bar">
     <button id="undo">待った</button>
     <button id="hint">ヒント</button>
-    <button id="restart" class="primary">新しいゲーム</button>
+    <button id="renew">新規対局</button>
+    <button id="snd" aria-pressed="true">♪ 音あり</button>
   </div>
 
-  <div class="scoreboard">
-    <div class="score" id="score-black">
-      <div class="disc black"></div>
-      <div><div>黒</div><div class="who" id="who-black">あなた</div></div>
-      <div class="num" id="num-black">2</div>
-    </div>
-    <div class="score" id="score-white">
-      <div class="disc white"></div>
-      <div><div>白</div><div class="who" id="who-white">CPU</div></div>
-      <div class="num" id="num-white">2</div>
-    </div>
+  <div class="panel">
+    <div class="note" id="note">空きマスの ○ をタップして着手</div>
+    <div class="moves" id="moves">棋譜はまだありません</div>
   </div>
-
-  <div class="board-wrap">
-    <div class="board" id="board"></div>
-    <div class="overlay" id="overlay">
-      <div class="result" id="result"></div>
-      <div class="detail" id="detail"></div>
-      <button class="primary" id="again">もう一度遊ぶ</button>
-    </div>
-  </div>
-  <div class="status" id="status"></div>
-
-  <footer>
-    盤面の光っているマスをクリックして石を置きます。<br>
-    挟んだ相手の石をすべて裏返し、最後に石が多い方の勝ちです。
-  </footer>
+</div>
 
 <script>
-(() => {
-  const N = 8, EMPTY = 0, BLACK = 1, WHITE = -1;
-  const DIRS = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
-  // 位置評価テーブル
-  const W = [
-    [120,-20, 20,  5,  5, 20,-20,120],
-    [-20,-40, -5, -5, -5, -5,-40,-20],
-    [ 20, -5, 15,  3,  3, 15, -5, 20],
-    [  5, -5,  3,  3,  3,  3, -5,  5],
-    [  5, -5,  3,  3,  3,  3, -5,  5],
-    [ 20, -5, 15,  3,  3, 15, -5, 20],
-    [-20,-40, -5, -5, -5, -5,-40,-20],
-    [120,-20, 20,  5,  5, 20,-20,120],
-  ];
+"use strict";
+/* =========================================================================
+   リバーシ エンジン
+   盤面は Int8Array(64)。0=空 1=黒 2=白。sq = row*8 + col（a1 = 0）
+   ========================================================================= */
+const EMPTY = 0, BLACK = 1, WHITE = 2;
 
-  const $ = id => document.getElementById(id);
-  const boardEl = $('board');
-  let board, turn, human, history, last, busy, hintMove, gameId = 0;
-
-  // ---- ルール ----
-  const inside = (r, c) => r >= 0 && r < N && c >= 0 && c < N;
-
-  function flips(b, r, c, p) {
-    if (b[r][c] !== EMPTY) return [];
-    const out = [];
-    for (const [dr, dc] of DIRS) {
-      const line = [];
-      let y = r + dr, x = c + dc;
-      while (inside(y, x) && b[y][x] === -p) { line.push([y, x]); y += dr; x += dc; }
-      if (line.length && inside(y, x) && b[y][x] === p) out.push(...line);
+// 各マスから 8 方向へ伸びるマス列を事前計算しておく
+const RAYS = (function () {
+  const dirs = [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]];
+  const all = [];
+  for (let sq = 0; sq < 64; sq++) {
+    const r = sq >> 3, c = sq & 7, list = [];
+    for (const [dr, dc] of dirs) {
+      const arr = [];
+      let rr = r + dr, cc = c + dc;
+      while (rr >= 0 && rr < 8 && cc >= 0 && cc < 8) { arr.push(rr * 8 + cc); rr += dr; cc += dc; }
+      list.push(arr);
     }
-    return out;
+    all.push(list);
+  }
+  return all;
+})();
+
+const CORNERS = [0, 7, 56, 63];
+const X_SQUARES = [9, 14, 49, 54];
+
+// マス評価値（隅を最重視、隅の斜め隣を強く嫌う）
+const WEIGHTS = [
+  120,-20, 20,  5,  5, 20,-20,120,
+  -20,-40, -5, -5, -5, -5,-40,-20,
+   20, -5, 15,  3,  3, 15, -5, 20,
+    5, -5,  3,  3,  3,  3, -5,  5,
+    5, -5,  3,  3,  3,  3, -5,  5,
+   20, -5, 15,  3,  3, 15, -5, 20,
+  -20,-40, -5, -5, -5, -5,-40,-20,
+  120,-20, 20,  5,  5, 20,-20,120,
+];
+const WIN = 1000000;
+
+function initialBoard() {
+  const b = new Int8Array(64);
+  b[27] = WHITE; b[36] = WHITE; b[28] = BLACK; b[35] = BLACK;
+  return b;
+}
+
+function genMoves(b, me) {
+  const opp = 3 - me, res = [];
+  for (let sq = 0; sq < 64; sq++) {
+    if (b[sq] !== EMPTY) continue;
+    const rs = RAYS[sq];
+    for (let d = 0; d < 8; d++) {
+      const ray = rs[d];
+      if (ray.length < 2 || b[ray[0]] !== opp) continue;
+      let k = 1;
+      while (k < ray.length && b[ray[k]] === opp) k++;
+      if (k < ray.length && b[ray[k]] === me) { res.push(sq); break; }
+    }
+  }
+  return res;
+}
+
+function doMove(b, sq, me) {
+  const opp = 3 - me, nb = b.slice();
+  nb[sq] = me;
+  const rs = RAYS[sq];
+  for (let d = 0; d < 8; d++) {
+    const ray = rs[d];
+    if (ray.length < 2 || b[ray[0]] !== opp) continue;
+    let k = 1;
+    while (k < ray.length && b[ray[k]] === opp) k++;
+    if (k < ray.length && b[ray[k]] === me) for (let j = 0; j < k; j++) nb[ray[j]] = me;
+  }
+  return nb;
+}
+
+function counts(b) {
+  let bl = 0, wh = 0;
+  for (let i = 0; i < 64; i++) { if (b[i] === BLACK) bl++; else if (b[i] === WHITE) wh++; }
+  return [bl, wh];
+}
+
+function posScore(b, me) {
+  let s = 0;
+  for (let i = 0; i < 64; i++) {
+    if (b[i] === me) s += WEIGHTS[i];
+    else if (b[i] !== EMPTY) s -= WEIGHTS[i];
+  }
+  return s;
+}
+
+// 空きマスに接している石（開放度）。少ないほうが良い
+function frontierDiff(b, me) {
+  let mine = 0, theirs = 0;
+  for (let sq = 0; sq < 64; sq++) {
+    const v = b[sq];
+    if (v === EMPTY) continue;
+    const rs = RAYS[sq];
+    for (let d = 0; d < 8; d++) {
+      const ray = rs[d];
+      if (ray.length && b[ray[0]] === EMPTY) { if (v === me) mine++; else theirs++; break; }
+    }
+  }
+  return mine - theirs;
+}
+
+function evaluate(b, me) {
+  const opp = 3 - me;
+  const nm = genMoves(b, me).length, no = genMoves(b, opp).length;
+  const cs = counts(b), bl = cs[0], wh = cs[1];
+  const mine = me === BLACK ? bl : wh, other = me === BLACK ? wh : bl;
+  if (nm === 0 && no === 0) {
+    const d = mine - other;
+    return d > 0 ? WIN + d : d < 0 ? -WIN + d : 0;
+  }
+  const empties = 64 - bl - wh;
+  const mobility = (nm + no) ? Math.floor((100 * (nm - no)) / (nm + no)) : 0;
+  let corner = 0;
+  for (const c of CORNERS) { if (b[c] === me) corner++; else if (b[c] === opp) corner--; }
+  const pos = posScore(b, me);
+  const front = frontierDiff(b, me);
+  if (empties > 12) return pos * 2 + mobility * 15 + corner * 100 - front * 10;
+  return pos + mobility * 8 + corner * 80 - front * 4 + (mine - other) * 12;
+}
+
+function finalScore(b, me, exact) {
+  const cs = counts(b);
+  const d = me === BLACK ? cs[0] - cs[1] : cs[1] - cs[0];
+  if (exact) return d * 100;           // 完全読み：石差そのものを最大化
+  return d > 0 ? WIN + d : d < 0 ? -WIN + d : 0;
+}
+
+// 有望そうな手を先に調べると枝刈りがよく効く
+function orderMoves(b, me, moves, prefer) {
+  const opp = 3 - me;
+  const list = moves.map(function (sq) {
+    const nb = doMove(b, sq, me);
+    let s = -genMoves(nb, opp).length * 8;      // 相手の手を減らす手を優先
+    if (CORNERS.indexOf(sq) >= 0) s += 100;
+    else if (X_SQUARES.indexOf(sq) >= 0) s -= 40;
+    if (sq === prefer) s += 10000;
+    return { sq: sq, nb: nb, s: s };
+  });
+  list.sort(function (a, z) { return z.s - a.s; });
+  return list;
+}
+
+// ネガマックス + αβ 枝刈り
+function search(b, me, depth, alpha, beta, ctx) {
+  ctx.nodes++;
+  if ((ctx.nodes & 1023) === 0 && Date.now() > ctx.deadline) ctx.stop = true;
+  if (ctx.stop) return 0;
+  if (depth <= 0) return ctx.exact ? finalScore(b, me, true) : evaluate(b, me);
+
+  const moves = genMoves(b, me);
+  if (moves.length === 0) {
+    if (genMoves(b, 3 - me).length === 0) return finalScore(b, me, ctx.exact);
+    return -search(b, 3 - me, depth, -beta, -alpha, ctx);      // パス
   }
 
-  function legalMoves(b, p) {
-    const m = [];
-    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
-      if (b[r][c] === EMPTY && flips(b, r, c, p).length) m.push([r, c]);
-    }
-    return m;
-  }
-
-  function apply(b, r, c, p) {
-    const nb = b.map(row => row.slice());
-    const f = flips(b, r, c, p);
-    nb[r][c] = p;
-    for (const [y, x] of f) nb[y][x] = p;
-    return { board: nb, flipped: f };
-  }
-
-  function count(b) {
-    let bl = 0, wh = 0;
-    for (const row of b) for (const v of row) { if (v === BLACK) bl++; else if (v === WHITE) wh++; }
-    return { black: bl, white: wh };
-  }
-
-  // ---- CPU (αβ探索) ----
-  function evaluate(b, p) {
-    const empties = b.flat().filter(v => v === EMPTY).length;
-    if (empties <= 10) { // 終盤は石数重視
-      const s = count(b); return (s.black - s.white) * p * 10;
-    }
-    let pos = 0;
-    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) pos += W[r][c] * b[r][c];
-    // 角が取られていれば隣接マスのペナルティを打ち消す
-    const corners = [[0,0,0,1,1,0,1,1],[0,7,0,6,1,7,1,6],[7,0,7,1,6,0,6,1],[7,7,7,6,6,7,6,6]];
-    for (const [cr, cc, ...adj] of corners) {
-      if (b[cr][cc] !== EMPTY) {
-        for (let i = 0; i < adj.length; i += 2) pos -= W[adj[i]][adj[i+1]] * b[adj[i]][adj[i+1]];
-      }
-    }
-    const mob = legalMoves(b, BLACK).length - legalMoves(b, WHITE).length;
-    return (pos + mob * 8) * p;
-  }
-
-  function search(b, p, depth, alpha, beta, passed) {
-    if (depth === 0) return evaluate(b, p);
-    const moves = legalMoves(b, p);
-    if (!moves.length) {
-      if (passed) { const s = count(b); return (s.black - s.white) * p * 1000; }
-      return -search(b, -p, depth, -beta, -alpha, true);
-    }
-    moves.sort((a, z) => W[z[0]][z[1]] - W[a[0]][a[1]]);
-    for (const [r, c] of moves) {
-      const v = -search(apply(b, r, c, p).board, -p, depth - 1, -beta, -alpha, false);
-      if (v > alpha) alpha = v;
+  let best = -WIN * 2;
+  if (depth >= 3) {
+    for (const m of orderMoves(b, me, moves, -1)) {
+      const v = -search(m.nb, 3 - me, depth - 1, -beta, -alpha, ctx);
+      if (v > best) best = v;
+      if (best > alpha) alpha = best;
       if (alpha >= beta) break;
     }
-    return alpha;
-  }
-
-  function bestMove(b, p, level) {
-    const moves = legalMoves(b, p);
-    if (!moves.length) return null;
-    if (level === 1) { // よわい: ほぼランダム、たまに角
-      const corner = moves.find(([r, c]) => (r === 0 || r === 7) && (c === 0 || c === 7));
-      if (corner && Math.random() < 0.5) return corner;
-      return moves[Math.floor(Math.random() * moves.length)];
-    }
-    const empties = b.flat().filter(v => v === EMPTY).length;
-    let depth = { 2: 2, 3: 4, 4: 6 }[level];
-    if (level >= 3 && empties <= (level === 4 ? 12 : 8)) depth = empties; // 終盤完全読み
-    let best = null, bestV = -Infinity;
-    moves.sort((a, z) => W[z[0]][z[1]] - W[a[0]][a[1]]);
-    for (const [r, c] of moves) {
-      const v = -search(apply(b, r, c, p).board, -p, depth - 1, -Infinity, -bestV, false) + Math.random() * 0.5;
-      if (v > bestV) { bestV = v; best = [r, c]; }
-    }
-    return best;
-  }
-
-  // ---- 描画 ----
-  function render(flipped = [], placed = null) {
-    const legal = (turn === human && !busy) ? legalMoves(board, turn) : [];
-    const legalSet = new Set(legal.map(([r, c]) => r * N + c));
-    const flipSet = new Set(flipped.map(([r, c]) => r * N + c));
-    boardEl.innerHTML = '';
-    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
-      const cell = document.createElement('div');
-      cell.className = 'cell';
-      const k = r * N + c;
-      if (legalSet.has(k)) {
-        cell.classList.add('legal');
-        cell.onclick = () => humanMove(r, c);
-      }
-      if (last && last[0] === r && last[1] === c) cell.classList.add('last');
-      if (hintMove && hintMove[0] === r && hintMove[1] === c) cell.style.background = '#2fae6c';
-      const v = board[r][c];
-      if (v !== EMPTY) {
-        const d = document.createElement('div');
-        d.className = 'disc ' + (v === BLACK ? 'black' : 'white');
-        if (flipSet.has(k)) d.classList.add('flip');
-        if (placed && placed[0] === r && placed[1] === c) d.classList.add('place');
-        cell.appendChild(d);
-      }
-      boardEl.appendChild(cell);
-    }
-    const s = count(board);
-    $('num-black').textContent = s.black;
-    $('num-white').textContent = s.white;
-    $('score-black').classList.toggle('active', turn === BLACK);
-    $('score-white').classList.toggle('active', turn === WHITE);
-  }
-
-  const name = p => p === BLACK ? '黒' : '白';
-  const setStatus = t => { $('status').textContent = t; };
-
-  // ---- 進行 ----
-  function newGame() {
-    gameId++;
-    board = Array.from({ length: N }, () => Array(N).fill(EMPTY));
-    board[3][3] = board[4][4] = WHITE;
-    board[3][4] = board[4][3] = BLACK;
-    turn = BLACK;
-    human = parseInt($('color').value, 10);
-    history = [];
-    last = null; busy = false; hintMove = null;
-    $('who-black').textContent = human === BLACK ? 'あなた' : 'CPU';
-    $('who-white').textContent = human === WHITE ? 'あなた' : 'CPU';
-    $('overlay').classList.remove('show');
-    render();
-    next();
-  }
-
-  function play(r, c) {
-    history.push({ board: board.map(row => row.slice()), turn, last });
-    const res = apply(board, r, c, turn);
-    board = res.board; last = [r, c]; hintMove = null;
-    turn = -turn;
-    render(res.flipped, [r, c]);
-  }
-
-  function humanMove(r, c) {
-    if (busy || turn !== human) return;
-    play(r, c);
-    next();
-  }
-
-  function next() {
-    const moves = legalMoves(board, turn);
-    if (!moves.length) {
-      if (!legalMoves(board, -turn).length) return finish();
-      setStatus(`${name(turn)}（${turn === human ? 'あなた' : 'CPU'}）は置ける場所がないのでパスです`);
-      turn = -turn;
-      render();
-      if (turn !== human) return setTimeout(() => cpuTurn(gameId), 900);
-      return;
-    }
-    if (turn === human) {
-      setStatus('あなたの番です');
-      render();
-    } else {
-      cpuTurn(gameId);
+  } else {
+    for (const sq of moves) {
+      const v = -search(doMove(b, sq, me), 3 - me, depth - 1, -beta, -alpha, ctx);
+      if (v > best) best = v;
+      if (best > alpha) alpha = best;
+      if (alpha >= beta) break;
     }
   }
+  return best;
+}
 
-  function cpuTurn(id) {
-    busy = true;
-    setStatus('CPU が考えています…');
-    render();
-    setTimeout(() => {
-      if (id !== gameId) return;
-      const m = bestMove(board, turn, parseInt($('level').value, 10));
-      busy = false;
-      if (m) play(m[0], m[1]);
-      next();
-    }, 450);
+function rootSearch(b, me, depth, prefer, ctx) {
+  let alpha = -WIN * 2, bestMove = -1, bestVal = -WIN * 2;
+  for (const m of orderMoves(b, me, genMoves(b, me), prefer)) {
+    const v = -search(m.nb, 3 - me, depth - 1, -WIN * 2, -alpha, ctx);
+    if (ctx.stop) break;
+    if (v > bestVal) { bestVal = v; bestMove = m.sq; }
+    if (v > alpha) alpha = v;
+  }
+  return { move: bestMove, value: bestVal };
+}
+
+const LEVELS = {
+  1: { name: "やさしい", depth: 2, exact: 6,  noise: 70, budget: 600 },
+  2: { name: "ふつう",   depth: 4, exact: 10, noise: 0,  budget: 1500 },
+  3: { name: "つよい",   depth: 6, exact: 14, noise: 0,  budget: 3000 },
+};
+
+/** 手番 me の着手を決める */
+function chooseMove(b, me, lv) {
+  const moves = genMoves(b, me);
+  if (moves.length === 0) return { move: -1, value: 0, nodes: 0, ms: 0, depth: 0, exact: false };
+  if (moves.length === 1) return { move: moves[0], value: 0, nodes: 1, ms: 0, depth: 0, exact: false };
+
+  const start = Date.now();
+  const cs = counts(b), empties = 64 - cs[0] - cs[1];
+  const ctx = { nodes: 0, stop: false, exact: false, deadline: start + lv.budget };
+
+  // 終盤：残りマスが少なければ最後まで読み切って石差を最大化する
+  if (empties <= lv.exact) {
+    ctx.exact = true;
+    ctx.deadline = start + lv.budget * 2;
+    const r = rootSearch(b, me, empties, -1, ctx);
+    if (!ctx.stop && r.move >= 0)
+      return { move: r.move, value: r.value, nodes: ctx.nodes, ms: Date.now() - start, depth: empties, exact: true };
+    ctx.exact = false; ctx.stop = false;           // 読み切れなければ通常探索に戻す
+    ctx.deadline = start + lv.budget;
   }
 
-  function finish() {
-    const s = count(board);
-    const mine = human === BLACK ? s.black : s.white;
-    const cpu = human === BLACK ? s.white : s.black;
-    $('result').textContent = mine > cpu ? 'あなたの勝ち！' : mine < cpu ? 'CPU の勝ち' : '引き分け';
-    $('detail').textContent = `黒 ${s.black} - ${s.white} 白`;
-    setStatus('ゲーム終了');
-    render();
-    $('overlay').classList.add('show');
+  // 反復深化：時間内に到達できた最深の結果を採用する
+  let best = { move: moves[0], value: 0 }, reached = 0;
+  const maxd = Math.min(lv.depth, empties);
+  for (let d = 2; d <= maxd; d++) {
+    const r = rootSearch(b, me, d, best.move, ctx);
+    if (ctx.stop) break;
+    best = r; reached = d;
+    if (Math.abs(r.value) >= WIN - 1000) break;
   }
 
-  // ---- ボタン ----
-  $('restart').onclick = newGame;
-  $('again').onclick = newGame;
-  $('color').onchange = newGame;
-  $('undo').onclick = () => {
-    if (busy) return;
-    // 自分の直前の手まで戻す
-    while (history.length) {
-      const h = history.pop();
-      board = h.board; turn = h.turn; last = h.last;
-      if (turn === human) break;
+  // やさしいレベル：評価にゆらぎを入れる（ただし隅は必ず取る）
+  if (lv.noise) {
+    const cand = orderMoves(b, me, moves, -1).map(function (m) {
+      const jitter = CORNERS.indexOf(m.sq) >= 0 ? 0 : Math.round((Math.random() * 2 - 1) * lv.noise * 4);
+      return { sq: m.sq, v: -evaluate(m.nb, 3 - me) + jitter };
+    });
+    cand.sort(function (a, z) { return z.v - a.v; });
+    best = { move: cand[0].sq, value: cand[0].v };
+  }
+
+  return { move: best.move, value: best.value, nodes: ctx.nodes, ms: Date.now() - start, depth: reached, exact: false };
+}
+
+/* =========================================================================
+   効果音：石が盤に当たる「パチッ」を Web Audio で合成する
+     ノイズの立ち上がり = 石同士が当たる衝撃音
+     短い減衰トーン     = 盤に響く胴の音
+   ========================================================================= */
+const Sfx = {
+  ctx: null, noise: null, muted: false,
+
+  // AudioContext はユーザー操作のタイミングでしか作れないので遅延生成する
+  ready: function () {
+    if (!this.ctx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      try { this.ctx = new AC(); } catch (e) { return null; }
+      const len = Math.floor(this.ctx.sampleRate * 0.12);
+      const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      this.noise = buf;
     }
-    if (turn !== human) return newGame();
-    hintMove = null;
-    $('overlay').classList.remove('show');
-    setStatus('あなたの番です');
-    render();
+    if (this.ctx.state === "suspended") { try { this.ctx.resume(); } catch (e) {} }
+    return this.ctx;
+  },
+
+  clack: function (delay, vol, pitch) {
+    if (this.muted) return;
+    const ctx = this.ready();
+    if (!ctx) return;
+    const t = ctx.currentTime + (delay || 0);
+    vol = vol === undefined ? 1 : vol;
+    pitch = pitch === undefined ? 1 : pitch;
+
+    const out = ctx.createGain();
+    out.gain.value = 0.5 * vol;
+    const lp = ctx.createBiquadFilter();
+    lp.type = "lowpass"; lp.frequency.value = 7000;
+    out.connect(lp); lp.connect(ctx.destination);
+
+    // 衝撃音：バンドパスを通した短いノイズ
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise;
+    const bp = ctx.createBiquadFilter();
+    bp.type = "bandpass"; bp.frequency.value = 2300 * pitch; bp.Q.value = 1.1;
+    const ng = ctx.createGain();
+    ng.gain.setValueAtTime(0.0001, t);
+    ng.gain.exponentialRampToValueAtTime(0.65, t + 0.002);
+    ng.gain.exponentialRampToValueAtTime(0.0001, t + 0.035);
+    src.connect(bp); bp.connect(ng); ng.connect(out);
+    src.start(t); src.stop(t + 0.06);
+
+    // 胴の響き：わずかに下がる 2 本のトーン
+    const tones = [[430, 0.45], [745, 0.22]];
+    for (const tn of tones) {
+      const o = ctx.createOscillator();
+      o.type = "triangle";
+      o.frequency.setValueAtTime(tn[0] * pitch, t);
+      o.frequency.exponentialRampToValueAtTime(tn[0] * pitch * 0.8, t + 0.09);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(tn[1], t + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
+      o.connect(g); g.connect(out);
+      o.start(t); o.stop(t + 0.13);
+    }
+  },
+};
+
+const FLIP_STEP = 55;   // 1 マス離れるごとに遅らせるミリ秒（音と見た目で共通）
+
+/** 着手マスからのチェビシェフ距離ごとに、裏返る石の数をまとめる */
+function flipWaves(board, sq, me) {
+  const nb = doMove(board, sq, me), waves = new Map();
+  for (let i = 0; i < 64; i++) {
+    if (i === sq || nb[i] === board[i]) continue;
+    const d = Math.max(Math.abs((i >> 3) - (sq >> 3)), Math.abs((i & 7) - (sq & 7)));
+    waves.set(d, (waves.get(d) || 0) + 1);
+  }
+  return waves;
+}
+
+/* =========================================================================
+   画面
+   ========================================================================= */
+const FILES = ["a","b","c","d","e","f","g","h"];
+const sqName = function (sq) { return sq < 0 ? "--" : FILES[sq & 7] + ((sq >> 3) + 1); };
+const $ = function (id) { return document.getElementById(id); };
+
+const reduceMotion = window.matchMedia
+  && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+let G = null;            // 対局状態
+let busy = false;        // CPU 思考中
+let cells = [];          // 盤面 DOM のキャッシュ
+let pickLv = 2, pickSd = BLACK;
+
+function newGame(humanColor, level) {
+  return {
+    board: initialBoard(), turn: BLACK, human: humanColor, level: level,
+    over: false, last: -1, tip: -1, message: "", info: null,
+    log: [], history: [], delays: {},
   };
-  $('hint').onclick = () => {
-    if (busy || turn !== human) return;
-    hintMove = bestMove(board, turn, 3);
-    render();
-  };
+}
 
-  newGame();
+/* ---- 盤面 DOM の生成（1 回だけ） ---- */
+(function buildBoard() {
+  const board = $("board");
+  for (let sq = 0; sq < 64; sq++) {
+    const r = sq >> 3, c = sq & 7;
+    const btn = document.createElement("button");
+    btn.className = "cell" + (((r + c) % 2 === 1) ? " alt" : "")
+                  + (c === 7 ? " c7" : "") + (r === 7 ? " r7" : "");
+    btn.type = "button";
+    btn.dataset.sq = sq;
+    btn.dataset.v = "0";
+    btn.innerHTML =
+      '<span class="disc"><span class="flip"><span class="face b"></span><span class="face w"></span></span></span>' +
+      '<span class="marker"></span><span class="dot"></span>';
+    btn.addEventListener("click", function () { play(sq); });
+    board.appendChild(btn);
+    cells.push({ btn: btn, flip: btn.querySelector(".flip") });
+  }
+  $("ranks").innerHTML = [1,2,3,4,5,6,7,8].map(function (n) { return "<span>" + n + "</span>"; }).join("");
+  $("files").innerHTML = FILES.map(function (f) { return "<span>" + f + "</span>"; }).join("");
 })();
+
+/* ---- 描画 ---- */
+function render() {
+  const g = G;
+  const cs = counts(g.board), bl = cs[0], wh = cs[1];
+  const legal = (g.over || g.turn !== g.human) ? [] : genMoves(g.board, g.turn);
+  const legalSet = new Set(legal);
+
+  for (let sq = 0; sq < 64; sq++) {
+    const cell = cells[sq], btn = cell.btn;
+    const v = g.board[sq], prev = +btn.dataset.v;
+
+    if (v !== prev) {
+      if (prev === EMPTY) {
+        // 新しく置かれた石は回転させず、その場に現れる
+        cell.flip.style.transition = "none";
+        cell.flip.style.transitionDelay = "0ms";
+        cell.flip.classList.toggle("white", v === WHITE);
+        void cell.flip.offsetWidth;                 // 強制リフロー
+        cell.flip.style.transition = "";
+      } else {
+        // 裏返る石は着手点からの距離だけ遅らせて回す
+        cell.flip.style.transitionDelay = reduceMotion ? "0ms" : ((g.delays[sq] || 0) + "ms");
+        cell.flip.classList.toggle("white", v === WHITE);
+      }
+      btn.dataset.v = v;
+      btn.classList.toggle("has", v !== EMPTY);
+    }
+
+    const canPlay = legalSet.has(sq);
+    btn.classList.toggle("playable", canPlay);
+    btn.classList.toggle("tip", g.tip === sq);
+    btn.classList.toggle("last", g.last === sq);
+    btn.disabled = !canPlay;
+    btn.setAttribute("aria-label", sqName(sq) + (
+      v === BLACK ? " 黒" : v === WHITE ? " 白" : canPlay ? " 着手可能" : " 空き"));
+  }
+
+  $("sub").textContent = "vs CPU — " + LEVELS[g.level].name;
+  $("remain").textContent = "残り " + String(64 - bl - wh).padStart(2, "0") + " マス";
+
+  const raw = evaluate(g.board, BLACK);
+  const pct = g.over ? (bl === wh ? 50 : bl > wh ? 100 : 0)
+                     : Math.max(4, Math.min(96, 50 + 46 * Math.tanh(raw / 400)));
+  $("meter").style.width = pct + "%";
+
+  // 形勢を言葉でも出す（バーの向きだけだと石数と取り違えやすい）
+  const lead = g.human === BLACK ? pct - 50 : 50 - pct;
+  $("edge").textContent = g.over ? "—"
+    : Math.abs(lead) < 4 ? "互角"
+    : (lead > 0 ? "あなた" : "CPU") + (Math.abs(lead) > 25 ? "が優勢" : "がやや良し");
+
+  $("sL").textContent = "● " + String(bl).padStart(2, "0") + (g.human === BLACK ? " YOU" : " CPU");
+  $("sR").textContent = (g.human === WHITE ? "YOU " : "CPU ") + String(wh).padStart(2, "0") + " ○";
+  $("sM").textContent = g.over ? "終局"
+    : busy ? "CPU 思考中…" : (g.turn === g.human ? "あなたの番" : "CPU の番");
+
+  $("note").textContent = g.message || (g.info
+    ? "CPU " + sqName(g.last) + " — " + (g.info.exact ? "完全読み切り" : g.info.depth + "手読み")
+      + " / " + g.info.nodes.toLocaleString() + " 局面 / " + g.info.ms + "ms"
+    : "空きマスの ○ をタップして着手");
+
+  $("moves").innerHTML = g.log.length
+    ? g.log.map(function (e) {
+        return '<span class="' + (e.side === g.human ? "me" : "") + '">'
+             + (e.side === BLACK ? "●" : "○") + sqName(e.sq) + "</span>";
+      }).join("")
+    : "棋譜はまだありません";
+
+  $("undo").disabled = busy || !g.history.length;
+  $("hint").disabled = busy || g.over || g.turn !== g.human;
+  $("renew").disabled = busy;
+
+  if (g.over) {
+    $("rB").textContent = bl; $("rW").textContent = wh;
+    $("rV").textContent = bl === wh ? "引き分け"
+      : ((bl > wh) === (g.human === BLACK) ? "あなたの勝ち" : "CPU の勝ち");
+    $("resultOver").classList.add("on");
+  } else {
+    $("resultOver").classList.remove("on");
+  }
+}
+
+/* ---- 着手音：着手 → 裏返りを距離順に鳴らす ---- */
+function playMoveSound(board, sq, me) {
+  Sfx.clack(0, 1, 0.9);
+  flipWaves(board, sq, me).forEach(function (n, d) {
+    Sfx.clack(
+      0.045 + (d - 1) * (FLIP_STEP / 1000),
+      Math.min(0.85, 0.34 + n * 0.1),     // 同時に返る石が多いほど太い音に
+      1.05 + d * 0.02                     // 遠いほどわずかに高く
+    );
+  });
+}
+
+/* ---- 手を進め、パス・終局を解決する ---- */
+function commit(sq, info) {
+  const g = G, me = g.turn, opp = 3 - me;
+  playMoveSound(g.board, sq, me);
+
+  g.history.push({ board: g.board, turn: g.turn, last: g.last, log: g.log.slice() });
+  const nb = doMove(g.board, sq, me);
+
+  // 裏返るマスごとの遅延。音のタイミングと揃えて波のように返す
+  const delays = {};
+  for (let i = 0; i < 64; i++) {
+    if (i === sq || nb[i] === g.board[i]) continue;
+    const d = Math.max(Math.abs((i >> 3) - (sq >> 3)), Math.abs((i & 7) - (sq & 7)));
+    delays[i] = (d - 1) * FLIP_STEP;
+  }
+
+  g.log.push({ side: me, sq: sq });
+  g.board = nb; g.last = sq; g.tip = -1; g.delays = delays;
+  g.info = info || null; g.message = "";
+
+  if (genMoves(nb, opp).length === 0) {
+    if (genMoves(nb, me).length === 0) { g.over = true; }
+    else { g.turn = me; g.message = (opp === BLACK ? "黒" : "白") + "は打てる手がなくパス"; }
+  } else {
+    g.turn = opp;
+  }
+
+  render();
+  maybeCpu();
+}
+
+function play(sq) {
+  if (busy || G.over || G.turn !== G.human) return;
+  if (genMoves(G.board, G.turn).indexOf(sq) < 0) return;
+  commit(sq, null);
+}
+
+/* ---- CPU の手番 ---- */
+function maybeCpu() {
+  if (G.over || G.turn === G.human || busy) return;
+  busy = true;
+  render();
+  // 「思考中」を描画してから探索に入る（探索は同期処理なので画面が固まらないように）
+  setTimeout(function () {
+    const res = chooseMove(G.board, G.turn, LEVELS[G.level]);
+    busy = false;
+    if (res.move >= 0) commit(res.move, res);
+    else render();
+  }, 240);
+}
+
+/* ---- 操作 ---- */
+$("undo").addEventListener("click", function () {
+  if (busy || !G.history.length) return;
+  while (G.history.length) {
+    const h = G.history.pop();
+    G.board = h.board; G.turn = h.turn; G.last = h.last; G.log = h.log;
+    G.over = false; G.message = ""; G.tip = -1; G.info = null; G.delays = {};
+    if (G.turn === G.human && genMoves(G.board, G.turn).length) break;
+  }
+  render();
+});
+
+$("hint").addEventListener("click", function () {
+  if (busy || G.over || G.turn !== G.human) return;
+  const r = chooseMove(G.board, G.turn, LEVELS[3]);
+  G.tip = r.move;
+  G.message = "おすすめは " + sqName(r.move);
+  render();
+});
+
+$("renew").addEventListener("click", function () {
+  if (busy) return;
+  $("resultOver").classList.remove("on");
+  $("setupOver").classList.add("on");
+});
+$("again").addEventListener("click", function () {
+  $("resultOver").classList.remove("on");
+  $("setupOver").classList.add("on");
+});
+
+$("snd").addEventListener("click", function () {
+  Sfx.muted = !Sfx.muted;
+  this.classList.toggle("off", Sfx.muted);
+  this.textContent = Sfx.muted ? "♪ 音なし" : "♪ 音あり";
+  this.setAttribute("aria-pressed", String(!Sfx.muted));
+  if (!Sfx.muted) Sfx.clack(0, 0.8, 1);     // 音量確認用に 1 発鳴らす
+});
+
+function wireSeg(id, get, set) {
+  const seg = $(id);
+  seg.addEventListener("click", function (ev) {
+    const btn = ev.target.closest("button");
+    if (!btn) return;
+    set(+btn.dataset.v);
+    paintSeg();
+  });
+}
+function paintSeg() {
+  Array.prototype.forEach.call($("segLv").children, function (b) {
+    b.setAttribute("aria-checked", String(+b.dataset.v === pickLv));
+  });
+  Array.prototype.forEach.call($("segSd").children, function (b) {
+    b.setAttribute("aria-checked", String(+b.dataset.v === pickSd));
+  });
+}
+wireSeg("segLv", null, function (v) { pickLv = v; });
+wireSeg("segSd", null, function (v) { pickSd = v; });
+
+$("start").addEventListener("click", function () {
+  Sfx.ready();                       // 音声はこのユーザー操作の中でしか解錠できない
+  G = newGame(pickSd, pickLv);
+  for (const c of cells) { c.btn.dataset.v = "0"; c.btn.classList.remove("has"); c.flip.classList.remove("white"); }
+  $("setupOver").classList.remove("on");
+  render();
+  maybeCpu();
+});
+
+/* ---- 起動 ---- */
+G = newGame(BLACK, 2);
+paintSeg();
+render();
 </script>
 </body>
 </html>
